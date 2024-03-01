@@ -284,6 +284,7 @@ impl EditorElement {
         register_action(view, cx, Editor::copy_highlight_json);
         register_action(view, cx, Editor::copy_permalink_to_line);
         register_action(view, cx, Editor::open_permalink_to_line);
+        register_action(view, cx, Editor::show_git_blame);
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.format(action, cx) {
                 task.detach_and_log_err(cx);
@@ -1973,6 +1974,12 @@ impl EditorElement {
     }
 
     fn compute_layout(&mut self, bounds: Bounds<Pixels>, cx: &mut ElementContext) -> LayoutState {
+        // 1. We make sure the project can expose git repositories in a useful way
+        // for the editor
+        // 2. We treat the git blame as data, and set it on the buffer, like the diff base
+        // 3. And ship feature
+        // 4. Profit!
+
         self.editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             let style = self.style.clone();

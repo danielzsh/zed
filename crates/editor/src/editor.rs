@@ -36,6 +36,7 @@ mod selections_collection;
 mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
+use ::git::blame::BufferBlame;
 use ::git::diff::DiffHunk;
 pub(crate) use actions::*;
 use aho_corasick::AhoCorasick;
@@ -89,8 +90,7 @@ pub use multi_buffer::{
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::project_settings::{GitGutterSetting, ProjectSettings};
-use project::Item;
-use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
+use project::{FormatTrigger, Item, Location, Project, ProjectPath, ProjectTransaction};
 use rand::prelude::*;
 use rpc::proto::*;
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
@@ -425,12 +425,18 @@ pub struct Editor {
     editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
     show_copilot_suggestions: bool,
     use_autoclose: bool,
+    blame: Option<BlameState>,
     custom_context_menu: Option<
         Box<
             dyn 'static
                 + Fn(&mut Self, DisplayPoint, &mut ViewContext<Self>) -> Option<View<ui::ContextMenu>>,
         >,
     >,
+}
+
+struct BlameState {
+    blame: BufferBlame,
+    refresh_subscription: Subscription,
 }
 
 pub struct EditorSnapshot {
@@ -1554,6 +1560,7 @@ impl Editor {
             editor_actions: Default::default(),
             show_copilot_suggestions: mode == EditorMode::Full,
             custom_context_menu: None,
+            blame: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -8653,6 +8660,50 @@ impl Editor {
                 }
             }
         }
+    }
+
+    pub fn show_git_blame(&mut self, _: &ShowGitBlame, cx: &mut ViewContext<Self>) {
+        match self.show_git_blame_internal(cx) {
+            Some(()) => {
+                println!("it worked!");
+            }
+            None => {
+                println!("no git blame :(");
+            }
+        }
+    }
+
+    fn show_git_blame_internal(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
+        let project_handle = self.project.as_ref()?.clone();
+        let project = project_handle.read(cx);
+        let buffer = self.buffer().read(cx).as_singleton()?;
+        let file = buffer.read(cx).file()?.as_local()?.path();
+        let git_repo = project.get_repo(&buffer.read(cx).project_path(cx)?, cx)?;
+
+        let mut buffer_blame = BufferBlame::new();
+        buffer_blame
+            .update(git_repo, file, self.text(cx))
+            .log_err()?;
+
+        let refresh_subscription =
+            cx.subscribe(&project_handle, |editor, _, event, _| match event {
+                project::Event::WorktreeUpdatedGitRepositories(_) => {
+                    println!(
+                        "WorktreeUpdatedGitRepositories. Update blame data. event: {:?}",
+                        event
+                    );
+                }
+                _ => {}
+            });
+
+        self.blame = Some(BlameState {
+            blame: buffer_blame,
+            refresh_subscription,
+        });
+
+        cx.notify();
+
+        Some(())
     }
 
     fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {

@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use anyhow::Result;
 use collections::HashMap;
 use git2::{BranchType, StatusShow};
@@ -12,7 +13,7 @@ use std::{
 use sum_tree::{MapSeekTarget, TreeMap};
 use util::{paths::PathExt, ResultExt};
 
-pub use git2::Repository as LibGitRepository;
+pub use git2::{BlameOptions as LibGitBlameOptions, Repository as LibGitRepository};
 
 #[derive(Clone, Debug, Hash, PartialEq)]
 pub struct Branch {
@@ -53,6 +54,8 @@ pub trait GitRepository: Send {
     fn branches(&self) -> Result<Vec<Branch>>;
     fn change_branch(&self, _: &str) -> Result<()>;
     fn create_branch(&self, _: &str) -> Result<()>;
+
+    fn blame_path(&self, path: &Path) -> Result<git2::Blame<'_>>;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -209,6 +212,14 @@ impl GitRepository for LibGitRepository {
 
         Ok(())
     }
+
+    fn blame_path(&self, path: &Path) -> Result<git2::Blame<'_>> {
+        let mut opts = git2::BlameOptions::default();
+        let blame = self.blame_file(path, Some(&mut opts))?;
+
+        // let buffer_blame = blame.blame_buffer(buffer.as_bytes())?;
+        Ok(blame)
+    }
 }
 
 fn matches_index(repo: &LibGitRepository, path: &RepoPath, mtime: SystemTime) -> bool {
@@ -316,6 +327,10 @@ impl GitRepository for FakeGitRepository {
         let mut state = self.state.lock();
         state.branch_name = Some(name.to_owned());
         Ok(())
+    }
+
+    fn blame_path(&self, path: &Path) -> Result<git2::Blame<'_>> {
+        Err(anyhow!("not implemented"))
     }
 }
 

@@ -232,6 +232,7 @@ gpui::actions!(
         SelectUp,
         ShowCharacterPalette,
         ShowCompletions,
+        ShowGitBlame,
         ShuffleLines,
         SortLinesCaseInsensitive,
         SortLinesCaseSensitive,

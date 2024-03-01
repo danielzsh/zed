@@ -74,6 +74,12 @@ pub enum Capability {
     ReadOnly,
 }
 
+// 1. Bring a repository in here
+//  issues: There's no dependencies for it yet, and cannot rely on project
+// 2. Bring this git stuff out of the buffer
+//  issues: probably a major refactor
+//
+
 /// An in-memory representation of a source code file, including its text,
 /// syntax trees, git status, and diagnostics.
 pub struct Buffer {
