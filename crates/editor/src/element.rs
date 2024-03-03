@@ -397,7 +397,7 @@ impl EditorElement {
     fn mouse_left_down(
         editor: &mut Editor,
         event: &MouseDownEvent,
-        hovered_hunk: Option<&DisplayDiffHunk>,
+        hovered_hunk: Option<&ClickableHunk>,
         position_map: &PositionMap,
         text_bounds: Bounds<Pixels>,
         gutter_bounds: Bounds<Pixels>,
@@ -411,16 +411,21 @@ impl EditorElement {
         let mut click_count = event.click_count;
         let modifiers = event.modifiers;
         if gutter_bounds.contains(&event.position) {
-            // TODO kb
-            match hovered_hunk {
-                Some(hunk) => {
-                    dbg!("!!!!!!!!", hunk);
-                    return;
-                }
-                None => {
-                    click_count = 3; // Simulate triple-click when clicking the gutter to select lines
+            if let Some(clickable_hunk) = hovered_hunk {
+                let buffer = editor.buffer().read(cx);
+                let buffer_snapshot = buffer.snapshot(cx);
+                // TODO kb: range seem to differ by one line
+                let mut hunks =
+                    buffer_snapshot.git_diff_hunks_in_range(clickable_hunk.row_range.clone());
+                let hunk = hunks.next();
+                if let Some(hunk) = hunk {
+                    if hunks.next().is_none() {
+                        dbg!("!!!!!!!!", clickable_hunk, hunk);
+                        return;
+                    }
                 }
             }
+            click_count = 3; // Simulate triple-click when clicking the gutter to select lines
         } else if !text_bounds.contains(&event.position) {
             return;
         }
@@ -562,7 +567,7 @@ impl EditorElement {
         position_map: &PositionMap,
         text_bounds: Bounds<Pixels>,
         gutter_bounds: Bounds<Pixels>,
-        drawn_hunks: Option<&DrawnHunks>,
+        clickable_hunks: Option<&ClickableHunks>,
         stacking_order: &StackingOrder,
         cx: &mut ViewContext<Editor>,
     ) {
@@ -572,16 +577,8 @@ impl EditorElement {
         let was_top = cx.was_top_layer(&event.position, stacking_order);
 
         editor.set_gutter_hovered(gutter_hovered, cx);
-        if let Some(drawn_hunks) = drawn_hunks {
-            if let Some((hovered_bounds, _)) = &drawn_hunks.hovered_hunk {
-                if !hovered_bounds.contains(&event.position) {
-                    cx.notify();
-                }
-            } else if drawn_hunks
-                .hunk_bounds
-                .iter()
-                .any(|range| range.contains(&event.position))
-            {
+        if let Some(clickable_hunks) = clickable_hunks {
+            if clickable_hunks.hover_changed(&event.position) {
                 cx.notify()
             }
         }
@@ -739,7 +736,7 @@ impl EditorElement {
         bounds: Bounds<Pixels>,
         layout: &mut LayoutState,
         cx: &mut ElementContext,
-    ) -> Option<DrawnHunks> {
+    ) -> Option<ClickableHunks> {
         let line_height = layout.position_map.line_height;
 
         let scroll_position = layout.position_map.snapshot.scroll_position();
@@ -750,17 +747,17 @@ impl EditorElement {
         );
 
         let mouse_position = cx.mouse_position();
-        let drawn_hunks = if show_git_gutter {
-            let drawn_hunks = Self::paint_diff_hunks(bounds, layout, &mouse_position, cx);
-            Some(drawn_hunks)
+        let clickable_hunks = if show_git_gutter {
+            let clickable_hunks = Self::paint_diff_hunks(bounds, layout, &mouse_position, cx);
+            Some(clickable_hunks)
         } else {
             None
         };
         if bounds.contains(&mouse_position) {
             let stacking_order = cx.stacking_order().clone();
-            if drawn_hunks
+            if clickable_hunks
                 .as_ref()
-                .map_or(false, |hunks| hunks.hovered_hunk.is_some())
+                .map_or(false, |hunks| hunks.hovered.is_some())
             {
                 cx.set_cursor_style(CursorStyle::PointingHand, stacking_order);
             } else {
@@ -829,7 +826,7 @@ impl EditorElement {
             }
         });
 
-        drawn_hunks
+        clickable_hunks
     }
 
     fn paint_diff_hunks(
@@ -837,34 +834,49 @@ impl EditorElement {
         layout: &LayoutState,
         mouse_position: &gpui::Point<Pixels>,
         cx: &mut ElementContext,
-    ) -> DrawnHunks {
+    ) -> ClickableHunks {
         let line_height = layout.position_map.line_height;
-        let mut drawn_hunks = DrawnHunks::default();
+        let mut clickable_hunks = ClickableHunks::default();
         for hunk in &layout.display_hunks {
             //TODO: This rendering is entirely a horrible hack
-            let (background_color, corner_radii) = match hunk {
-                DisplayDiffHunk::Folded { .. } => {
-                    (cx.theme().status().modified, Corners::all(1. * line_height))
-                }
-                DisplayDiffHunk::Unfolded { status, .. } => match status {
+            let (clickable_part, background_color, corner_radii) = match hunk {
+                DisplayDiffHunk::Folded { .. } => (
+                    None,
+                    cx.theme().status().modified,
+                    Corners::all(1. * line_height),
+                ),
+                DisplayDiffHunk::Unfolded {
+                    status,
+                    display_row_range,
+                } => match status {
                     DiffHunkStatus::Added => (
+                        Some((status, display_row_range)),
                         cx.theme().status().created,
                         Corners::all(0.05 * line_height),
                     ),
                     DiffHunkStatus::Modified => (
+                        Some((status, display_row_range)),
                         cx.theme().status().modified,
                         Corners::all(0.05 * line_height),
                     ),
-                    DiffHunkStatus::Removed => {
-                        (cx.theme().status().deleted, Corners::all(1. * line_height))
-                    }
+                    DiffHunkStatus::Removed => (
+                        Some((status, display_row_range)),
+                        cx.theme().status().deleted,
+                        Corners::all(1. * line_height),
+                    ),
                 },
             };
 
             let hunk_bounds = Self::diff_hunk_bounds(&layout.position_map, bounds, hunk);
-            drawn_hunks.hunk_bounds.push(hunk_bounds);
-            if hunk_bounds.contains(mouse_position) {
-                drawn_hunks.hovered_hunk = Some((hunk_bounds, hunk.clone()));
+            if let Some((&status, display_row_range)) = clickable_part {
+                clickable_hunks.all.push(hunk_bounds);
+                if hunk_bounds.contains(mouse_position) {
+                    clickable_hunks.hovered = Some(ClickableHunk {
+                        bounds: hunk_bounds,
+                        status,
+                        row_range: display_row_range.clone(),
+                    });
+                }
             }
             cx.paint_quad(quad(
                 hunk_bounds,
@@ -875,7 +887,7 @@ impl EditorElement {
             ));
         }
 
-        drawn_hunks
+        clickable_hunks
     }
 
     fn diff_hunk_bounds(
@@ -2790,7 +2802,7 @@ impl EditorElement {
         &mut self,
         bounds: Bounds<Pixels>,
         gutter_bounds: Bounds<Pixels>,
-        drawn_hunks: Option<DrawnHunks>,
+        clickable_hunks: Option<ClickableHunks>,
         text_bounds: Bounds<Pixels>,
         layout: &LayoutState,
         cx: &mut ElementContext,
@@ -2800,9 +2812,10 @@ impl EditorElement {
             stacking_order: cx.stacking_order().clone(),
         };
 
-        let hovered_hunk = drawn_hunks
+        let hovered_hunk = clickable_hunks
             .as_ref()
-            .and_then(|hunks| Some(hunks.hovered_hunk.as_ref()?.1.clone()));
+            .and_then(|hunks| hunks.hovered_hunk())
+            .cloned();
         self.paint_scroll_wheel_listener(&interactive_bounds, layout, cx);
 
         cx.on_mouse_event({
@@ -2888,7 +2901,7 @@ impl EditorElement {
                                 &position_map,
                                 text_bounds,
                                 gutter_bounds,
-                                drawn_hunks.as_ref(),
+                                clickable_hunks.as_ref(),
                                 &stacking_order,
                                 cx,
                             )
@@ -3195,7 +3208,7 @@ impl Element for EditorElement {
                             );
 
                             self.paint_background(gutter_bounds, text_bounds, &layout, cx);
-                            let drawn_hunks = if layout.gutter_size.width > Pixels::ZERO {
+                            let clickable_hunks = if layout.gutter_size.width > Pixels::ZERO {
                                 self.paint_gutter(gutter_bounds, &mut layout, cx)
                             } else {
                                 None
@@ -3206,7 +3219,7 @@ impl Element for EditorElement {
                                 self.paint_mouse_listeners(
                                     bounds,
                                     gutter_bounds,
-                                    drawn_hunks,
+                                    clickable_hunks,
                                     text_bounds,
                                     &layout,
                                     cx,
@@ -4208,8 +4221,28 @@ fn compute_auto_height_layout(
     Some(size(width, height))
 }
 
+#[derive(Debug, Clone)]
+struct ClickableHunk {
+    bounds: Bounds<Pixels>,
+    status: DiffHunkStatus,
+    row_range: Range<u32>,
+}
+
 #[derive(Default, Debug, Clone)]
-struct DrawnHunks {
-    hovered_hunk: Option<(Bounds<Pixels>, DisplayDiffHunk)>,
-    hunk_bounds: Vec<Bounds<Pixels>>,
+struct ClickableHunks {
+    hovered: Option<ClickableHunk>,
+    all: Vec<Bounds<Pixels>>,
+}
+
+impl ClickableHunks {
+    fn hovered_hunk(&self) -> Option<&ClickableHunk> {
+        self.hovered.as_ref()
+    }
+
+    fn hover_changed(&self, hovered_at: &gpui::Point<Pixels>) -> bool {
+        match &self.hovered {
+            Some(hovered) => !hovered.bounds.contains(hovered_at),
+            None => self.all.iter().any(|bounds| bounds.contains(hovered_at)),
+        }
+    }
 }
