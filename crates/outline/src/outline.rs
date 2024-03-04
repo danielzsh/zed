@@ -1,5 +1,6 @@
 use editor::{
-    display_map::ToDisplayPoint, scroll::Autoscroll, Anchor, AnchorRangeExt, Bias, DisplayPoint, Editor, EditorMode, ToPoint
+    display_map::ToDisplayPoint, scroll::Autoscroll, Anchor, AnchorRangeExt, Bias, DisplayPoint,
+    Editor, EditorMode, ToPoint,
 };
 use fuzzy::StringMatch;
 use gpui::{
@@ -153,7 +154,10 @@ impl OutlineViewDelegate {
                 let end = buffer_snapshot.clip_point(end, Bias::Left);
                 let end = buffer_snapshot.anchor_at(end, Bias::Left);
 
-                active_editor.highlight_rows::<OutlineRowHighlihghts>(start..end, cx.theme().colors().editor_highlighted_line_background);
+                active_editor.highlight_new_rows::<OutlineRowHighlihghts>(
+                    start..end,
+                    cx.theme().colors().editor_highlighted_line_background,
+                );
                 active_editor.request_autoscroll(Autoscroll::center(), cx);
             });
         }

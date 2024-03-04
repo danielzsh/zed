@@ -679,16 +679,16 @@ impl EditorElement {
 
             let mut last_row = None;
             let mut highlight_rows_range = 0_u32..0;
-            let mut paint_highlight = |highlight_rows_range: Range<u32>, color| {
+            let mut paint_highlight = |highlight_rows: Range<u32>, color| {
                 let origin = point(
                     bounds.origin.x,
                     bounds.origin.y
-                        + layout.position_map.line_height * highlight_rows_range.start as f32
+                        + (layout.position_map.line_height * highlight_rows.start as f32)
                         - scroll_top,
                 );
                 let size = size(
                     bounds.size.width,
-                    layout.position_map.line_height * highlight_rows_range.len() as f32,
+                    layout.position_map.line_height * highlight_rows.len() as f32,
                 );
                 // TODO kb highlights are displayed too much up at the top
                 cx.paint_quad(fill(dbg!(Bounds { origin, size }), color));
@@ -708,8 +708,6 @@ impl EditorElement {
                     }
                     last_row = Some((row, highlighted_line_bg));
                 }
-
-
             }
             if !highlight_rows_range.is_empty() {
                 if let Some((_, hsla)) = last_row {
@@ -2958,9 +2956,10 @@ fn try_click_diff_hunk(
                 .collect::<String>();
 
             eprintln!("TODO kb Should display text as added: {new_text}");
-            editor.highlight_rows::<GitHighlight>(
-                buffer_snapshot.anchor_at(buffer_range.start, Bias::Left)..buffer_snapshot.anchor_at(buffer_range.end, Bias::Left),
-                 cx.theme().status().git().created,
+            editor.highlight_new_rows::<GitHighlight>(
+                buffer_snapshot.anchor_at(buffer_range.start, Bias::Left)
+                    ..buffer_snapshot.anchor_at(buffer_range.end, Bias::Left),
+                cx.theme().status().git().created,
             );
         }
         DiffHunkStatus::Modified => {

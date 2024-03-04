@@ -8794,11 +8794,15 @@ impl Editor {
         }
     }
 
-    pub fn highlight_rows<T: 'static>(&mut self, rows: Range<Anchor>, hsla: Hsla) {
+    pub fn highlight_new_rows<T: 'static>(&mut self, rows: Range<Anchor>, hsla: Hsla) {
         let key = TypeId::of::<T>();
         let highlight_index = post_inc(&mut self.highlight_index);
-        let highlighted_rows = self.highlighted_rows.entry(key).or_insert_with(|| (highlight_index, HashMap::default()));
+        let highlighted_rows = self
+            .highlighted_rows
+            .entry(key)
+            .or_insert_with(|| (highlight_index, HashMap::default()));
         highlighted_rows.0 = highlight_index;
+        highlighted_rows.1.clear();
         highlighted_rows.1.insert(rows.start, hsla);
         highlighted_rows.1.insert(rows.end, hsla);
     }
@@ -8810,18 +8814,22 @@ impl Editor {
     pub fn highlighted_display_rows(&mut self, cx: &mut ViewContext<Self>) -> BTreeMap<u32, Hsla> {
         let snapshot = self.snapshot(cx);
         let mut used_highlight_indices = HashMap::default();
-        self.highlighted_rows.iter().fold(BTreeMap::new(), |mut unique_rows, (_, (highlight_index, row_anchors))| {
-            for (&row_anchor, &hsla) in row_anchors {
-                let row = row_anchor.to_display_point(&snapshot).row();
-                let used_index = used_highlight_indices.entry(row).or_insert(*highlight_index);
-                if highlight_index >= used_index {
-                    *used_index = *highlight_index;
-                    unique_rows.insert(row, hsla);
-
+        self.highlighted_rows.iter().fold(
+            BTreeMap::new(),
+            |mut unique_rows, (_, (highlight_index, row_anchors))| {
+                for (&row_anchor, &hsla) in row_anchors {
+                    let row = row_anchor.to_display_point(&snapshot).row();
+                    let used_index = used_highlight_indices
+                        .entry(row)
+                        .or_insert(*highlight_index);
+                    if highlight_index >= used_index {
+                        *used_index = *highlight_index;
+                        unique_rows.insert(row, hsla);
+                    }
                 }
-            }
-            unique_rows
-        })
+                unique_rows
+            },
+        )
     }
 
     pub fn highlight_background<T: 'static>(

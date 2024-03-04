@@ -112,9 +112,19 @@ impl GoToLine {
                 let mut next_row_point = display_point;
                 *next_row_point.row_mut() += 1;
                 let next_row_point = next_row_point.to_point(&snapshot);
-                let next_row_point = snapshot.buffer_snapshot.clip_point(next_row_point, Bias::Left);
+                let next_row_point = snapshot
+                    .buffer_snapshot
+                    .clip_point(next_row_point, Bias::Left);
 
-                active_editor.highlight_rows::<GoToLineHighlights>(snapshot.buffer_snapshot.anchor_at(display_point.to_point(&snapshot), Bias::Left)..snapshot.buffer_snapshot.anchor_at(next_row_point, Bias::Left), cx.theme().colors().editor_highlighted_line_background);
+                active_editor.highlight_new_rows::<GoToLineHighlights>(
+                    snapshot
+                        .buffer_snapshot
+                        .anchor_at(display_point.to_point(&snapshot), Bias::Left)
+                        ..snapshot
+                            .buffer_snapshot
+                            .anchor_at(next_row_point, Bias::Left),
+                    cx.theme().colors().editor_highlighted_line_background,
+                );
                 active_editor.request_autoscroll(Autoscroll::center(), cx);
             });
             cx.notify();
