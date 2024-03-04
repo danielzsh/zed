@@ -18,20 +18,20 @@ use crate::{
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
-use git::diff::DiffHunkStatus;
+use git::diff::{DiffHunk, DiffHunkStatus};
 use gpui::{
     div, fill, outline, overlay, point, px, quad, relative, size, transparent_black, Action,
-    AnchorCorner, AnyElement, AvailableSpace, Bounds, ContentMask, Corners, CursorStyle,
-    DispatchPhase, Edges, Element, ElementInputHandler, Entity, Hsla, InteractiveBounds,
-    InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine,
-    SharedString, Size, StackingOrder, StatefulInteractiveElement, Style, Styled, TextRun,
-    TextStyle, View, ViewContext, WindowContext,
+    AnchorCorner, AnyElement, AppContext, AvailableSpace, Bounds, ContentMask, Corners,
+    CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity, Hsla,
+    InteractiveBounds, InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollDelta,
+    ScrollWheelEvent, ShapedLine, SharedString, Size, StackingOrder, StatefulInteractiveElement,
+    Style, Styled, TextRun, TextStyle, View, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
 use lsp::DiagnosticSeverity;
-use multi_buffer::Anchor;
+use multi_buffer::{Anchor, MultiBuffer, MultiBufferSnapshot};
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
     ProjectPath,
@@ -397,7 +397,7 @@ impl EditorElement {
     fn mouse_left_down(
         editor: &mut Editor,
         event: &MouseDownEvent,
-        hovered_hunk: Option<&ClickableHunk>,
+        clickable_hunk_hovered: bool,
         position_map: &PositionMap,
         text_bounds: Bounds<Pixels>,
         gutter_bounds: Bounds<Pixels>,
@@ -411,21 +411,11 @@ impl EditorElement {
         let mut click_count = event.click_count;
         let modifiers = event.modifiers;
         if gutter_bounds.contains(&event.position) {
-            if let Some(clickable_hunk) = hovered_hunk {
-                let buffer = editor.buffer().read(cx);
-                let buffer_snapshot = buffer.snapshot(cx);
-                // TODO kb: range seem to differ by one line
-                let mut hunks =
-                    buffer_snapshot.git_diff_hunks_in_range(clickable_hunk.row_range.clone());
-                let hunk = hunks.next();
-                if let Some(hunk) = hunk {
-                    if hunks.next().is_none() {
-                        dbg!("!!!!!!!!", clickable_hunk, hunk);
-                        return;
-                    }
-                }
+            if clickable_hunk_hovered {
+                try_click_diff_hunk(editor, position_map, text_bounds, event.position, cx);
+            } else {
+                click_count = 3; // Simulate triple-click when clicking the gutter to select lines
             }
-            click_count = 3; // Simulate triple-click when clicking the gutter to select lines
         } else if !text_bounds.contains(&event.position) {
             return;
         }
@@ -839,28 +829,25 @@ impl EditorElement {
         let mut clickable_hunks = ClickableHunks::default();
         for hunk in &layout.display_hunks {
             //TODO: This rendering is entirely a horrible hack
-            let (clickable_part, background_color, corner_radii) = match hunk {
+            let (clickable, background_color, corner_radii) = match hunk {
                 DisplayDiffHunk::Folded { .. } => (
-                    None,
+                    false,
                     cx.theme().status().modified,
                     Corners::all(1. * line_height),
                 ),
-                DisplayDiffHunk::Unfolded {
-                    status,
-                    display_row_range,
-                } => match status {
+                DisplayDiffHunk::Unfolded { status, .. } => match status {
                     DiffHunkStatus::Added => (
-                        Some((status, display_row_range)),
+                        true,
                         cx.theme().status().created,
                         Corners::all(0.05 * line_height),
                     ),
                     DiffHunkStatus::Modified => (
-                        Some((status, display_row_range)),
+                        true,
                         cx.theme().status().modified,
                         Corners::all(0.05 * line_height),
                     ),
                     DiffHunkStatus::Removed => (
-                        Some((status, display_row_range)),
+                        true,
                         cx.theme().status().deleted,
                         Corners::all(1. * line_height),
                     ),
@@ -868,14 +855,10 @@ impl EditorElement {
             };
 
             let hunk_bounds = Self::diff_hunk_bounds(&layout.position_map, bounds, hunk);
-            if let Some((&status, display_row_range)) = clickable_part {
+            if clickable {
                 clickable_hunks.all.push(hunk_bounds);
                 if hunk_bounds.contains(mouse_position) {
-                    clickable_hunks.hovered = Some(ClickableHunk {
-                        bounds: hunk_bounds,
-                        status,
-                        row_range: display_row_range.clone(),
-                    });
+                    clickable_hunks.hovered = Some(hunk_bounds);
                 }
             }
             cx.paint_quad(quad(
@@ -2812,10 +2795,9 @@ impl EditorElement {
             stacking_order: cx.stacking_order().clone(),
         };
 
-        let hovered_hunk = clickable_hunks
+        let clickable_hunk_hovered = clickable_hunks
             .as_ref()
-            .and_then(|hunks| hunks.hovered_hunk())
-            .cloned();
+            .map_or(false, |hunks| hunks.hovered_hunk().is_some());
         self.paint_scroll_wheel_listener(&interactive_bounds, layout, cx);
 
         cx.on_mouse_event({
@@ -2833,7 +2815,7 @@ impl EditorElement {
                             Self::mouse_left_down(
                                 editor,
                                 event,
-                                hovered_hunk.as_ref(),
+                                clickable_hunk_hovered,
                                 &position_map,
                                 text_bounds,
                                 gutter_bounds,
@@ -2901,6 +2883,7 @@ impl EditorElement {
                                 &position_map,
                                 text_bounds,
                                 gutter_bounds,
+                                // TODO kb order by left coordinate to improve lookup
                                 clickable_hunks.as_ref(),
                                 &stacking_order,
                                 cx,
@@ -2911,6 +2894,67 @@ impl EditorElement {
             }
         });
     }
+}
+
+fn try_click_diff_hunk(
+    editor: &mut Editor,
+    position_map: &PositionMap,
+    text_bounds: Bounds<Pixels>,
+    clicked_at: gpui::Point<Pixels>,
+    cx: &mut ViewContext<'_, Editor>,
+) -> Option<()> {
+    let editor_snapshot = editor.snapshot(cx);
+    let clicked_row = position_map
+        .point_for_position(text_bounds, clicked_at)
+        .as_valid()
+        .map(|display_point| {
+            display_point
+                .to_point(&editor_snapshot.display_snapshot)
+                .row
+        })?;
+    let (buffer_snapshot, diff_base) = editor.buffer().update(cx, |buffer, cx| {
+        let buffer_snapshot = buffer.snapshot(cx);
+        let diff_base = clicked_buffer_diff_base(buffer, clicked_row, cx);
+        (buffer_snapshot, diff_base)
+    });
+    let diff_base = diff_base?;
+    let hunk = buffer_diff_hunk(&buffer_snapshot, clicked_row)?;
+    let original_text = diff_base.get(hunk.diff_base_byte_range)?;
+    let buffer_range = Point::new(hunk.buffer_range.start, 0)..Point::new(hunk.buffer_range.end, 0);
+    let new_text = buffer_snapshot
+        .text_for_range(buffer_range)
+        .collect::<String>();
+
+    dbg!("@@@@@@@@@@@@@@@", original_text, new_text);
+    Some(())
+}
+
+fn clicked_buffer_diff_base(
+    buffer: &MultiBuffer,
+    clicked_row: u32,
+    cx: &mut AppContext,
+) -> Option<String> {
+    let clicked_point = Point::new(clicked_row, 0);
+    let mut clicked_ranges = buffer.range_to_buffer_ranges(clicked_point..clicked_point, cx);
+    if clicked_ranges.len() == 1 {
+        let (clicked_buffer, _, _) = clicked_ranges.pop()?;
+        clicked_buffer.read(cx).diff_base().map(ToString::to_string)
+    } else {
+        None
+    }
+}
+
+fn buffer_diff_hunk(
+    buffer_snapshot: &MultiBufferSnapshot,
+    clicked_row: u32,
+) -> Option<DiffHunk<u32>> {
+    let mut hunks = buffer_snapshot.git_diff_hunks_in_range(clicked_row..clicked_row);
+    let hunk = hunks.next()?;
+    let second_hunk = hunks.next();
+    if second_hunk.is_none() {
+        return Some(hunk);
+    }
+    None
 }
 
 #[derive(Debug)]
@@ -4221,27 +4265,20 @@ fn compute_auto_height_layout(
     Some(size(width, height))
 }
 
-#[derive(Debug, Clone)]
-struct ClickableHunk {
-    bounds: Bounds<Pixels>,
-    status: DiffHunkStatus,
-    row_range: Range<u32>,
-}
-
 #[derive(Default, Debug, Clone)]
 struct ClickableHunks {
-    hovered: Option<ClickableHunk>,
+    hovered: Option<Bounds<Pixels>>,
     all: Vec<Bounds<Pixels>>,
 }
 
 impl ClickableHunks {
-    fn hovered_hunk(&self) -> Option<&ClickableHunk> {
-        self.hovered.as_ref()
+    fn hovered_hunk(&self) -> Option<Bounds<Pixels>> {
+        self.hovered
     }
 
     fn hover_changed(&self, hovered_at: &gpui::Point<Pixels>) -> bool {
         match &self.hovered {
-            Some(hovered) => !hovered.bounds.contains(hovered_at),
+            Some(hovered) => !hovered.contains(hovered_at),
             None => self.all.iter().any(|bounds| bounds.contains(hovered_at)),
         }
     }
