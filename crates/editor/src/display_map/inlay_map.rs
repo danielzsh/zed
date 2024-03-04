@@ -1,5 +1,6 @@
-use crate::InlayId;
+use crate::{HighlightStyles, InlayId};
 use collections::{BTreeMap, BTreeSet};
+use git::diff::DiffHunkStatus;
 use gpui::HighlightStyle;
 use language::{Chunk, Edit, Point, TextSummary};
 use multi_buffer::{Anchor, MultiBufferChunks, MultiBufferRows, MultiBufferSnapshot, ToOffset};
@@ -63,6 +64,19 @@ impl Inlay {
     pub fn suggestion<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
         Self {
             id: InlayId::Suggestion(id),
+            position,
+            text: text.into(),
+        }
+    }
+
+    pub fn git_hunk<T: Into<Rope>>(
+        id: usize,
+        position: Anchor,
+        text: T,
+        git_status: DiffHunkStatus,
+    ) -> Self {
+        Self {
+            id: InlayId::GitHunk(id, git_status),
             position,
             text: text.into(),
         }
@@ -215,8 +229,7 @@ pub struct InlayChunks<'a> {
     inlay_chunk: Option<&'a str>,
     output_offset: InlayOffset,
     max_output_offset: InlayOffset,
-    inlay_highlight_style: Option<HighlightStyle>,
-    suggestion_highlight_style: Option<HighlightStyle>,
+    highlight_styles: HighlightStyles,
     highlight_endpoints: Peekable<vec::IntoIter<HighlightEndpoint>>,
     active_highlights: BTreeMap<Option<TypeId>, HighlightStyle>,
     highlights: Highlights<'a>,
@@ -307,8 +320,13 @@ impl<'a> Iterator for InlayChunks<'a> {
                 }
 
                 let mut highlight_style = match inlay.id {
-                    InlayId::Suggestion(_) => self.suggestion_highlight_style,
-                    InlayId::Hint(_) => self.inlay_highlight_style,
+                    InlayId::Suggestion(_) => self.highlight_styles.suggestion,
+                    InlayId::Hint(_) => self.highlight_styles.inlay,
+                    InlayId::GitHunk(_, status) => match status {
+                        DiffHunkStatus::Added => self.highlight_styles.git_created,
+                        DiffHunkStatus::Modified => self.highlight_styles.git_modified,
+                        DiffHunkStatus::Removed => self.highlight_styles.git_deleted,
+                    },
                 };
                 let next_inlay_highlight_endpoint;
                 let offset_in_inlay = self.output_offset - self.transforms.start().0;
@@ -1052,8 +1070,7 @@ impl InlaySnapshot {
             buffer_chunk: None,
             output_offset: range.start,
             max_output_offset: range.end,
-            inlay_highlight_style: highlights.inlay_highlight_style,
-            suggestion_highlight_style: highlights.suggestion_highlight_style,
+            highlight_styles: highlights.styles,
             highlight_endpoints: highlight_endpoints.into_iter().peekable(),
             active_highlights: Default::default(),
             highlights,

@@ -27,7 +27,7 @@ pub fn diff<'a>(head: &'a str, current: &'a str) -> Option<GitPatch<'a>> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DiffHunkStatus {
     Added,
     Modified,

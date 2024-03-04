@@ -13,8 +13,8 @@ use crate::{
     scroll::scroll_amount::ScrollAmount,
     CursorShape, DisplayPoint, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode,
     EditorSettings, EditorSnapshot, EditorStyle, GitHighlight, GutterDimensions, HalfPageDown,
-    HalfPageUp, HoveredCursor, Inlay, InlayId, LineDown, LineUp, OpenExcerpts, PageDown, PageUp,
-    Point, SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    HalfPageUp, HoveredCursor, Inlay, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
+    SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
@@ -690,10 +690,10 @@ impl EditorElement {
                     bounds.size.width,
                     layout.position_map.line_height * highlight_rows.len() as f32,
                 );
-                // TODO kb highlights are displayed too much up at the top
-                cx.paint_quad(fill(dbg!(Bounds { origin, size }), color));
+                cx.paint_quad(fill(Bounds { origin, size }, color));
             };
-            for (&row, &highlighted_line_bg) in dbg!(&layout.highlighted_rows) {
+            // TODO kb highlights for additions with lines > 1 are not displayed
+            for (&row, &highlighted_line_bg) in &layout.highlighted_rows {
                 let paint = last_row.map_or(false, |(last_row, _)| last_row + 1 < row);
 
                 if paint {
@@ -2944,26 +2944,18 @@ fn try_click_diff_hunk(
     })?;
 
     match hovered_hunk.status {
-        // TODO kb add inlays for all 3 cases?
         DiffHunkStatus::Removed => {
             let position = buffer_snapshot.anchor_at(buffer_range.start, Bias::Left);
-            eprintln!("TODO kb Should display text as removed: {original_text}");
-            let id = InlayId::Hint(post_inc(&mut editor.next_inlay_id));
-            editor.splice_inlays(
-                Vec::new(),
-                vec![Inlay {
-                    id,
-                    position,
-                    text: original_text.into(),
-                }],
-                cx,
+            let inlay = Inlay::git_hunk(
+                post_inc(&mut editor.next_inlay_id),
+                position,
+                original_text,
+                hovered_hunk.status,
             );
+            editor.git_inlays.insert(inlay.id, inlay.clone());
+            editor.splice_inlays(Vec::new(), vec![inlay], cx);
         }
         DiffHunkStatus::Added => {
-            let new_text = buffer_snapshot
-                .text_for_range(buffer_range.clone())
-                .collect::<String>();
-            eprintln!("TODO kb Should display text as added: {new_text}");
             editor.highlight_new_rows::<GitHighlight>(
                 buffer_snapshot.anchor_at(buffer_range.start, Bias::Left)
                     ..buffer_snapshot.anchor_at(buffer_range.end, Bias::Left),
@@ -2971,21 +2963,15 @@ fn try_click_diff_hunk(
             );
         }
         DiffHunkStatus::Modified => {
-            let new_text = buffer_snapshot
-                .text_for_range(buffer_range.clone())
-                .collect::<String>();
-            eprintln!("TODO kb Should display text diff: {original_text}, {new_text}");
             let position = buffer_snapshot.anchor_at(buffer_range.start, Bias::Left);
-            let id = InlayId::Hint(post_inc(&mut editor.next_inlay_id));
-            editor.splice_inlays(
-                Vec::new(),
-                vec![Inlay {
-                    id,
-                    position,
-                    text: original_text.into(),
-                }],
-                cx,
+            let inlay = Inlay::git_hunk(
+                post_inc(&mut editor.next_inlay_id),
+                position,
+                original_text,
+                DiffHunkStatus::Removed,
             );
+            editor.git_inlays.insert(inlay.id, inlay.clone());
+            editor.splice_inlays(Vec::new(), vec![inlay], cx);
             editor.highlight_new_rows::<GitHighlight>(
                 buffer_snapshot.anchor_at(buffer_range.start, Bias::Left)
                     ..buffer_snapshot.anchor_at(buffer_range.end, Bias::Left),
