@@ -13,10 +13,10 @@ use crate::{
     scroll::scroll_amount::ScrollAmount,
     CursorShape, DisplayPoint, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode,
     EditorSettings, EditorSnapshot, EditorStyle, GitHighlight, GutterDimensions, HalfPageDown,
-    HalfPageUp, HoveredCursor, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
-    SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    HalfPageUp, HoveredCursor, Inlay, InlayId, LineDown, LineUp, OpenExcerpts, PageDown, PageUp,
+    Point, SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
-use anyhow::{Context, Result};
+use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use git::diff::{DiffHunk, DiffHunkStatus};
 use gpui::{
@@ -51,7 +51,7 @@ use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
 use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, IconButton, Tooltip};
-use util::ResultExt;
+use util::{post_inc, ResultExt};
 use workspace::item::Item;
 
 struct SelectionLayout {
@@ -2948,13 +2948,21 @@ fn try_click_diff_hunk(
         DiffHunkStatus::Removed => {
             let position = buffer_snapshot.anchor_at(buffer_range.start, Bias::Left);
             eprintln!("TODO kb Should display text as removed: {original_text}");
-            editor.test_set_suggestion(&original_text, position, cx);
+            let id = InlayId::Hint(post_inc(&mut editor.next_inlay_id));
+            editor.splice_inlays(
+                Vec::new(),
+                vec![Inlay {
+                    id,
+                    position,
+                    text: original_text.into(),
+                }],
+                cx,
+            );
         }
         DiffHunkStatus::Added => {
             let new_text = buffer_snapshot
                 .text_for_range(buffer_range.clone())
                 .collect::<String>();
-
             eprintln!("TODO kb Should display text as added: {new_text}");
             editor.highlight_new_rows::<GitHighlight>(
                 buffer_snapshot.anchor_at(buffer_range.start, Bias::Left)
@@ -2964,19 +2972,25 @@ fn try_click_diff_hunk(
         }
         DiffHunkStatus::Modified => {
             let new_text = buffer_snapshot
-                .text_for_range(buffer_range)
+                .text_for_range(buffer_range.clone())
                 .collect::<String>();
-            git::diff::diff(&original_text, &new_text)?
-                .print(&mut |_, _, diff_line| {
-                    dbg!((
-                        diff_line.origin(),
-                        String::from_utf8_lossy(diff_line.content())
-                    ));
-                    true
-                })
-                .context("printing a clicked gutter hunk diff")
-                .log_err()?;
             eprintln!("TODO kb Should display text diff: {original_text}, {new_text}");
+            let position = buffer_snapshot.anchor_at(buffer_range.start, Bias::Left);
+            let id = InlayId::Hint(post_inc(&mut editor.next_inlay_id));
+            editor.splice_inlays(
+                Vec::new(),
+                vec![Inlay {
+                    id,
+                    position,
+                    text: original_text.into(),
+                }],
+                cx,
+            );
+            editor.highlight_new_rows::<GitHighlight>(
+                buffer_snapshot.anchor_at(buffer_range.start, Bias::Left)
+                    ..buffer_snapshot.anchor_at(buffer_range.end, Bias::Left),
+                cx.theme().status().git().created,
+            );
         }
     }
 
