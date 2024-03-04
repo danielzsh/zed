@@ -12,9 +12,9 @@ use crate::{
     mouse_context_menu,
     scroll::scroll_amount::ScrollAmount,
     CursorShape, DisplayPoint, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode,
-    EditorSettings, EditorSnapshot, EditorStyle, GutterDimensions, HalfPageDown, HalfPageUp,
-    HoveredCursor, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, SelectPhase, Selection,
-    SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    EditorSettings, EditorSnapshot, EditorStyle, GitHighlight, GutterDimensions, HalfPageDown,
+    HalfPageUp, HoveredCursor, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
+    SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
 use anyhow::{Context, Result};
 use collections::{BTreeMap, HashMap};
@@ -678,27 +678,43 @@ impl EditorElement {
             }
 
             let mut last_row = None;
-            let mut highlight_height = Pixels(0.0_f32);
-            for (&row, &highlighted_line_bg) in &layout.highlighted_rows {
-                let paint = last_row.map_or(false, |last_row| last_row + 1 < row);
+            let mut highlight_rows_range = 0_u32..0;
+            let mut paint_highlight = |highlight_rows_range: Range<u32>, color| {
+                let origin = point(
+                    bounds.origin.x,
+                    bounds.origin.y
+                        + layout.position_map.line_height * highlight_rows_range.start as f32
+                        - scroll_top,
+                );
+                let size = size(
+                    bounds.size.width,
+                    layout.position_map.line_height * highlight_rows_range.len() as f32,
+                );
+                // TODO kb highlights are displayed too much up at the top
+                cx.paint_quad(fill(dbg!(Bounds { origin, size }), color));
+            };
+            for (&row, &highlighted_line_bg) in dbg!(&layout.highlighted_rows) {
+                let paint = last_row.map_or(false, |(last_row, _)| last_row + 1 < row);
 
                 if paint {
-                    let origin = point(
-                        bounds.origin.x,
-                        bounds.origin.y
-                            + highlight_height
-                            - scroll_top,
-                    );
-                    let size = size(
-                        bounds.size.width,
-                        highlight_height,
-                    );
-                    cx.paint_quad(fill(Bounds { origin, size }, highlighted_line_bg));
-                    highlight_height = Pixels(0.0);
+                    paint_highlight(highlight_rows_range, highlighted_line_bg);
+                    highlight_rows_range = 0..0;
+                    last_row = None;
+                } else {
+                    if last_row.is_none() {
+                        highlight_rows_range.start = row;
+                    } else {
+                        highlight_rows_range.end = row;
+                    }
+                    last_row = Some((row, highlighted_line_bg));
                 }
 
-                last_row = Some(row);
-                highlight_height += layout.position_map.line_height;
+
+            }
+            if !highlight_rows_range.is_empty() {
+                if let Some((_, hsla)) = last_row {
+                    paint_highlight(highlight_rows_range, hsla);
+                }
             }
 
             let scroll_left =
@@ -2125,7 +2141,7 @@ impl EditorElement {
             let mut active_rows = BTreeMap::new();
             let is_singleton = editor.is_singleton(cx);
 
-            let highlighted_rows = editor.highlighted_rows();
+            let highlighted_rows = editor.highlighted_display_rows(cx);
             let highlighted_ranges = editor.background_highlights_in_range(
                 start_anchor..end_anchor,
                 &snapshot.display_snapshot,
@@ -2923,41 +2939,48 @@ fn try_click_diff_hunk(
         &hovered_hunk.display_row_range,
         &editor_snapshot.display_snapshot,
     );
-    editor.buffer().update(cx, |buffer, cx| {
-        match hovered_hunk.status {
-            // TODO kb add inlays for all 3 cases?
-            DiffHunkStatus::Removed => {
-                let original_text = original_text(buffer, buffer_range, cx)?;
-                eprintln!("TODO kb Should display text as removed: {original_text}");
-            }
-            DiffHunkStatus::Added => {
-                let buffer_snapshot = buffer.snapshot(cx);
-                let new_text = buffer_snapshot
-                    .text_for_range(buffer_range)
-                    .collect::<String>();
-                eprintln!("TODO kb Should display text as added: {new_text}");
-            }
-            DiffHunkStatus::Modified => {
-                let original_text = original_text(buffer, buffer_range.clone(), cx)?;
-                let buffer_snapshot = buffer.snapshot(cx);
-                let new_text = buffer_snapshot
-                    .text_for_range(buffer_range)
-                    .collect::<String>();
-                git::diff::diff(&original_text, &new_text)?
-                    .print(&mut |_, _, diff_line| {
-                        dbg!((
-                            diff_line.origin(),
-                            String::from_utf8_lossy(diff_line.content())
-                        ));
-                        true
-                    })
-                    .context("printing a clicked gutter hunk diff")
-                    .log_err()?;
-                eprintln!("TODO kb Should display text diff: {original_text}, {new_text}");
-            }
-        }
-        Some(())
+    let (buffer_snapshot, original_text) = editor.buffer().update(cx, |buffer, cx| {
+        let buffer_snapshot = buffer.snapshot(cx);
+        let original_text = original_text(buffer, buffer_range.clone(), cx)?;
+        Some((buffer_snapshot, original_text))
     })?;
+
+    match hovered_hunk.status {
+        // TODO kb add inlays for all 3 cases?
+        DiffHunkStatus::Removed => {
+            let position = buffer_snapshot.anchor_at(buffer_range.start, Bias::Left);
+            eprintln!("TODO kb Should display text as removed: {original_text}");
+            editor.test_set_suggestion(&original_text, position, cx);
+        }
+        DiffHunkStatus::Added => {
+            let new_text = buffer_snapshot
+                .text_for_range(buffer_range.clone())
+                .collect::<String>();
+
+            eprintln!("TODO kb Should display text as added: {new_text}");
+            editor.highlight_rows::<GitHighlight>(
+                buffer_snapshot.anchor_at(buffer_range.start, Bias::Left)..buffer_snapshot.anchor_at(buffer_range.end, Bias::Left),
+                 cx.theme().status().git().created,
+            );
+        }
+        DiffHunkStatus::Modified => {
+            let new_text = buffer_snapshot
+                .text_for_range(buffer_range)
+                .collect::<String>();
+            git::diff::diff(&original_text, &new_text)?
+                .print(&mut |_, _, diff_line| {
+                    dbg!((
+                        diff_line.origin(),
+                        String::from_utf8_lossy(diff_line.content())
+                    ));
+                    true
+                })
+                .context("printing a clicked gutter hunk diff")
+                .log_err()?;
+            eprintln!("TODO kb Should display text diff: {original_text}, {new_text}");
+        }
+    }
+
     Some(())
 }
 

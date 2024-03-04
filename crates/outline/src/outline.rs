@@ -1,6 +1,5 @@
 use editor::{
-    display_map::ToDisplayPoint, scroll::Autoscroll, Anchor, AnchorRangeExt, DisplayPoint, Editor,
-    EditorMode, ToPoint,
+    display_map::ToDisplayPoint, scroll::Autoscroll, Anchor, AnchorRangeExt, Bias, DisplayPoint, Editor, EditorMode, ToPoint
 };
 use fuzzy::StringMatch;
 use gpui::{
@@ -145,11 +144,16 @@ impl OutlineViewDelegate {
             self.active_editor.update(cx, |active_editor, cx| {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
                 let buffer_snapshot = &snapshot.buffer_snapshot;
-                let start = outline_item.range.start.to_point(buffer_snapshot);
-                let end = outline_item.range.end.to_point(buffer_snapshot);
-                let display_rows = start.to_display_point(&snapshot).row()
-                    ..end.to_display_point(&snapshot).row() + 1;
-                active_editor.highlight_rows::<OutlineRowHighlihghts>(display_rows, cx.theme().colors().editor_highlighted_line_background);
+                let start = outline_item.range.start.to_point(&buffer_snapshot);
+                let start = buffer_snapshot.anchor_at(start, Bias::Left);
+
+                let mut end = outline_item.range.end.to_display_point(&snapshot);
+                *end.row_mut() += 1;
+                let end = end.to_point(&snapshot);
+                let end = buffer_snapshot.clip_point(end, Bias::Left);
+                let end = buffer_snapshot.anchor_at(end, Bias::Left);
+
+                active_editor.highlight_rows::<OutlineRowHighlihghts>(start..end, cx.theme().colors().editor_highlighted_line_background);
                 active_editor.request_autoscroll(Autoscroll::center(), cx);
             });
         }
@@ -242,7 +246,7 @@ impl PickerDelegate for OutlineViewDelegate {
         self.prev_scroll_position.take();
 
         self.active_editor.update(cx, |active_editor, cx| {
-            if let Some(row) = active_editor.highlighted_rows().first_entry() {
+            if let Some(row) = active_editor.highlighted_display_rows(cx).first_entry() {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
                 let position = DisplayPoint::new(*row.key(), 0).to_point(&snapshot);
                 active_editor.change_selections(Some(Autoscroll::center()), cx, |s| {

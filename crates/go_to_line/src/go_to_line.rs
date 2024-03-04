@@ -107,10 +107,14 @@ impl GoToLine {
         if let Some(point) = self.point_from_query(cx) {
             self.active_editor.update(cx, |active_editor, cx| {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
-                let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
                 let display_point = point.to_display_point(&snapshot);
-                let row = display_point.row();
-                active_editor.highlight_rows::<GoToLineHighlights>(row..row + 1, cx.theme().colors().editor_highlighted_line_background);
+
+                let mut next_row_point = display_point;
+                *next_row_point.row_mut() += 1;
+                let next_row_point = next_row_point.to_point(&snapshot);
+                let next_row_point = snapshot.buffer_snapshot.clip_point(next_row_point, Bias::Left);
+
+                active_editor.highlight_rows::<GoToLineHighlights>(snapshot.buffer_snapshot.anchor_at(display_point.to_point(&snapshot), Bias::Left)..snapshot.buffer_snapshot.anchor_at(next_row_point, Bias::Left), cx.theme().colors().editor_highlighted_line_background);
                 active_editor.request_autoscroll(Autoscroll::center(), cx);
             });
             cx.notify();

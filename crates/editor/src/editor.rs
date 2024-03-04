@@ -217,6 +217,7 @@ impl InlayId {
     }
 }
 
+enum GitHighlight {}
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
 enum InputComposition {}
@@ -387,7 +388,7 @@ pub struct Editor {
     show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
     highlight_index: usize,
-    highlighted_rows: HashMap<TypeId, (usize, BTreeMap<u32, Hsla>)>,
+    highlighted_rows: HashMap<TypeId, (usize, HashMap<Anchor, Hsla>)>,
     background_highlights: BTreeMap<TypeId, BackgroundHighlight>,
     nav_history: Option<ItemNavHistory>,
     context_menu: RwLock<Option<ContextMenu>>,
@@ -1831,6 +1832,28 @@ impl Editor {
         self.show_copilot_suggestions = show_copilot_suggestions;
     }
 
+    // TODO kb remove
+    pub fn test_set_suggestion(
+        &mut self,
+        new_suggestion: &str,
+        position: Anchor,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let new_inlay = Inlay {
+            id: InlayId::Suggestion(post_inc(&mut self.next_inlay_id)),
+            position,
+            text: new_suggestion.into(),
+        };
+        let to_remove = self
+            .copilot_state
+            .suggestion
+            .replace(new_inlay.clone())
+            .map(|old_inlay| old_inlay.id)
+            .into_iter()
+            .collect::<Vec<_>>();
+        self.splice_inlay_hints(to_remove, vec![new_inlay], cx)
+    }
+
     pub fn set_use_modal_editing(&mut self, to: bool) {
         self.use_modal_editing = to;
     }
@@ -2340,6 +2363,7 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+        self.clear_row_highlights::<GitHighlight>();
         if self.dismiss_menus_and_popups(cx) {
             return;
         }
@@ -8770,25 +8794,25 @@ impl Editor {
         }
     }
 
-    // TODO kb for git, store previous state and restore it?
-    pub fn highlight_rows<T: 'static>(&mut self, rows: Range<u32>, hsla: Hsla) {
+    pub fn highlight_rows<T: 'static>(&mut self, rows: Range<Anchor>, hsla: Hsla) {
         let key = TypeId::of::<T>();
         let highlight_index = post_inc(&mut self.highlight_index);
-        let highlighted_rows = self.highlighted_rows.entry(key).or_insert_with(|| (highlight_index, BTreeMap::new()));
+        let highlighted_rows = self.highlighted_rows.entry(key).or_insert_with(|| (highlight_index, HashMap::default()));
         highlighted_rows.0 = highlight_index;
-        for row in rows {
-            highlighted_rows.1.insert(row, hsla);
-        }
+        highlighted_rows.1.insert(rows.start, hsla);
+        highlighted_rows.1.insert(rows.end, hsla);
     }
 
     pub fn clear_row_highlights<T: 'static>(&mut self) {
         self.highlighted_rows.remove(&TypeId::of::<T>());
     }
 
-    pub fn highlighted_rows(&self) -> BTreeMap<u32, Hsla> {
+    pub fn highlighted_display_rows(&mut self, cx: &mut ViewContext<Self>) -> BTreeMap<u32, Hsla> {
+        let snapshot = self.snapshot(cx);
         let mut used_highlight_indices = HashMap::default();
-        self.highlighted_rows.iter().fold(BTreeMap::new(), |mut unique_rows, (_, (highlight_index, rows))| {
-            for (&row, &hsla) in rows {
+        self.highlighted_rows.iter().fold(BTreeMap::new(), |mut unique_rows, (_, (highlight_index, row_anchors))| {
+            for (&row_anchor, &hsla) in row_anchors {
+                let row = row_anchor.to_display_point(&snapshot).row();
                 let used_index = used_highlight_indices.entry(row).or_insert(*highlight_index);
                 if highlight_index >= used_index {
                     *used_index = *highlight_index;

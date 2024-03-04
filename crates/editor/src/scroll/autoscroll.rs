@@ -81,7 +81,7 @@ impl Editor {
 
         let mut target_top;
         let mut target_bottom;
-        if let Some(first_highlighted_row) = &self.highlighted_rows().first_entry() {
+        if let Some(first_highlighted_row) = &self.highlighted_display_rows(cx).first_entry() {
             target_top = *first_highlighted_row.key() as f32;
             target_bottom = target_top + 1.;
         } else {
