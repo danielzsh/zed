@@ -101,6 +101,8 @@ struct OutlineViewDelegate {
     last_query: String,
 }
 
+enum OutlineRowHighlihghts {}
+
 impl OutlineViewDelegate {
     fn new(
         outline_view: WeakView<OutlineView>,
@@ -121,7 +123,7 @@ impl OutlineViewDelegate {
 
     fn restore_active_editor(&mut self, cx: &mut WindowContext) {
         self.active_editor.update(cx, |editor, cx| {
-            editor.highlight_rows(None);
+            editor.clear_row_highlights::<OutlineRowHighlihghts>();
             if let Some(scroll_position) = self.prev_scroll_position {
                 editor.set_scroll_position(scroll_position, cx);
             }
@@ -147,7 +149,7 @@ impl OutlineViewDelegate {
                 let end = outline_item.range.end.to_point(buffer_snapshot);
                 let display_rows = start.to_display_point(&snapshot).row()
                     ..end.to_display_point(&snapshot).row() + 1;
-                active_editor.highlight_rows(Some(display_rows));
+                active_editor.highlight_rows::<OutlineRowHighlihghts>(display_rows, cx.theme().colors().editor_highlighted_line_background);
                 active_editor.request_autoscroll(Autoscroll::center(), cx);
             });
         }
@@ -240,13 +242,13 @@ impl PickerDelegate for OutlineViewDelegate {
         self.prev_scroll_position.take();
 
         self.active_editor.update(cx, |active_editor, cx| {
-            if let Some(rows) = active_editor.highlighted_rows() {
+            if let Some(row) = active_editor.highlighted_rows().first_entry() {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
-                let position = DisplayPoint::new(rows.start, 0).to_point(&snapshot);
+                let position = DisplayPoint::new(*row.key(), 0).to_point(&snapshot);
                 active_editor.change_selections(Some(Autoscroll::center()), cx, |s| {
                     s.select_ranges([position..position])
                 });
-                active_editor.highlight_rows(None);
+                active_editor.clear_row_highlights::<OutlineRowHighlihghts>();
                 active_editor.focus(cx);
             }
         });

@@ -677,19 +677,28 @@ impl EditorElement {
                 }
             }
 
-            if let Some(highlighted_rows) = &layout.highlighted_rows {
-                let origin = point(
-                    bounds.origin.x,
-                    bounds.origin.y
-                        + (layout.position_map.line_height * highlighted_rows.start as f32)
-                        - scroll_top,
-                );
-                let size = size(
-                    bounds.size.width,
-                    layout.position_map.line_height * highlighted_rows.len() as f32,
-                );
-                let highlighted_line_bg = cx.theme().colors().editor_highlighted_line_background;
-                cx.paint_quad(fill(Bounds { origin, size }, highlighted_line_bg));
+            let mut last_row = None;
+            let mut highlight_height = Pixels(0.0_f32);
+            for (&row, &highlighted_line_bg) in &layout.highlighted_rows {
+                let paint = last_row.map_or(false, |last_row| last_row + 1 < row);
+
+                if paint {
+                    let origin = point(
+                        bounds.origin.x,
+                        bounds.origin.y
+                            + highlight_height
+                            - scroll_top,
+                    );
+                    let size = size(
+                        bounds.size.width,
+                        highlight_height,
+                    );
+                    cx.paint_quad(fill(Bounds { origin, size }, highlighted_line_bg));
+                    highlight_height = Pixels(0.0);
+                }
+
+                last_row = Some(row);
+                highlight_height += layout.position_map.line_height;
             }
 
             let scroll_left =
@@ -3357,7 +3366,7 @@ pub struct LayoutState {
     visible_anchor_range: Range<Anchor>,
     visible_display_row_range: Range<u32>,
     active_rows: BTreeMap<u32, bool>,
-    highlighted_rows: Option<Range<u32>>,
+    highlighted_rows: BTreeMap<u32, Hsla>,
     line_numbers: Vec<Option<ShapedLine>>,
     display_hunks: Vec<DisplayDiffHunk>,
     blocks: Vec<BlockLayout>,

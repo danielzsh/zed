@@ -32,6 +32,8 @@ impl FocusableView for GoToLine {
 }
 impl EventEmitter<DismissEvent> for GoToLine {}
 
+enum GoToLineHighlights {}
+
 impl GoToLine {
     fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
         let handle = cx.view().downgrade();
@@ -78,7 +80,7 @@ impl GoToLine {
             .update(cx, |_, cx| {
                 let scroll_position = self.prev_scroll_position.take();
                 self.active_editor.update(cx, |editor, cx| {
-                    editor.highlight_rows(None);
+                    editor.clear_row_highlights::<GoToLineHighlights>();
                     if let Some(scroll_position) = scroll_position {
                         editor.set_scroll_position(scroll_position, cx);
                     }
@@ -108,7 +110,7 @@ impl GoToLine {
                 let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
                 let display_point = point.to_display_point(&snapshot);
                 let row = display_point.row();
-                active_editor.highlight_rows(Some(row..row + 1));
+                active_editor.highlight_rows::<GoToLineHighlights>(row..row + 1, cx.theme().colors().editor_highlighted_line_background);
                 active_editor.request_autoscroll(Autoscroll::center(), cx);
             });
             cx.notify();
