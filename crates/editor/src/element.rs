@@ -677,8 +677,6 @@ impl EditorElement {
                 }
             }
 
-            let mut last_row = None;
-            let mut highlight_rows_range = 0_u32..0;
             let mut paint_highlight = |highlight_rows: Range<u32>, color| {
                 let origin = point(
                     bounds.origin.x,
@@ -692,25 +690,37 @@ impl EditorElement {
                 );
                 cx.paint_quad(fill(Bounds { origin, size }, color));
             };
-            // TODO kb highlights for additions with lines > 1 are not displayed
-            for (&row, &highlighted_line_bg) in &layout.highlighted_rows {
-                let paint = last_row.map_or(false, |(last_row, _)| last_row + 1 < row);
+            let mut last_row = None;
+            let mut highlight_rows_range = 0_u32..0;
+            for (&row, &color) in &layout.highlighted_rows {
+                let paint = last_row.map_or(false, |(last_row, last_color)| {
+                    last_color != color || last_row + 1 < row
+                });
 
                 if paint {
-                    paint_highlight(highlight_rows_range, highlighted_line_bg);
+                    let paint_range_is_unfinished = highlight_rows_range.end == 0;
+                    if paint_range_is_unfinished {
+                        highlight_rows_range.end = row;
+                        last_row = None;
+                    }
+                    paint_highlight(highlight_rows_range, color);
                     highlight_rows_range = 0..0;
-                    last_row = None;
+                    if !paint_range_is_unfinished {
+                        highlight_rows_range.start = row;
+                        last_row = Some((row, color));
+                    }
                 } else {
                     if last_row.is_none() {
                         highlight_rows_range.start = row;
                     } else {
                         highlight_rows_range.end = row;
                     }
-                    last_row = Some((row, highlighted_line_bg));
+                    last_row = Some((row, color));
                 }
             }
-            if !highlight_rows_range.is_empty() {
-                if let Some((_, hsla)) = last_row {
+            if let Some((row, hsla)) = last_row {
+                highlight_rows_range.end = row;
+                if !highlight_rows_range.is_empty() {
                     paint_highlight(highlight_rows_range, hsla);
                 }
             }
@@ -2927,6 +2937,8 @@ impl EditorElement {
     }
 }
 
+// TODO kb: addtion background highlights erase each other on multiple toggles
+// TOOD kb toggling multiple hunks consequently sometimes toggles the previous one
 fn try_click_diff_hunk(
     editor: &mut Editor,
     hovered_hunk: &HoveredHunk,
