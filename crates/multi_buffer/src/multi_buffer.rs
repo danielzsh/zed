@@ -3207,6 +3207,7 @@ impl MultiBufferSnapshot {
         &self,
         row_range: Range<u32>,
     ) -> impl Iterator<Item = DiffHunk<u32>> + '_ {
+        println!("git diff hunks in range");
         let mut cursor = self.excerpts.cursor::<Point>();
 
         cursor.seek(&Point::new(row_range.start, 0), Bias::Right, &());

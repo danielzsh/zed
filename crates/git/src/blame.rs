@@ -1,6 +1,7 @@
 use fs::repository::GitRepository;
 
 use anyhow::Result;
+use libgit::Oid;
 use parking_lot::Mutex;
 use std::{ops::Range, path::Path, sync::Arc};
 use sum_tree::SumTree;
@@ -8,24 +9,34 @@ use text::Anchor;
 
 pub use git2 as libgit;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BlameHunkStatus {
-    Added,
-    Modified,
-    Removed,
-}
+// DiffHunk is the data
+// DiffHunk<u32> has a `.status`
+// DiffHunk<Anchor> implements `sum_tree::Item`
+//   summary is `DiffHunkSummary` with `buffer_range: Range<Anchor>`
+
+// DiffHunkSummary implements `sum_tree::Summary`
+// when that gets added via `add_summary` with another summary
+// it expands its range.
+
+// BufferDiff, `hunks_in_row_range` takes in a `Range<u32>`
+// converts the range to anchors
+// then sets `hunks_intersecting_range`, which takes in anchors
+
+// the real magic happens in `hunks_intersecting_range`
+
+// - builds a cursor that only gives the hunks in the tree that are in the range
+// - then takes the hunks that cursor returns and turns them into pair of start/end
+
+// - it then calls `buffer.summaries_for_anchors_with_payload` to essentially convert
+// the `Anchor`s into `Point`s. The `payload` is the diff information.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlameHunk<T> {
     pub buffer_range: Range<T>,
-    pub diff_base_byte_range: Range<usize>,
+    pub commit: Oid,
 }
 
-impl BlameHunk<u32> {
-    pub fn status(&self) -> BlameHunkStatus {
-        BlameHunkStatus::Added
-    }
-}
+impl BlameHunk<u32> {}
 
 impl sum_tree::Item for BlameHunk<Anchor> {
     type Summary = BlameHunkSummary;
